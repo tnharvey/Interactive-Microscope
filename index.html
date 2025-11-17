@@ -24,6 +24,12 @@
             display: block;
             color: white;
         }
+        #back-button {
+            padding: 6px 40px 6px 40px;
+            background-color: #7d8fa7;
+            border-radius: 6px;
+            margin: 10px;
+        }
     </style>
 </head>
 <body class="bg-gray-900">
@@ -53,9 +59,14 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
     // CORE SETUP
     let scene, camera, renderer, controls;
+    let composer, bloomPass; // For post-processing
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     const loader = new GLTFLoader();
@@ -63,6 +74,7 @@
     // STATE MANAGEMENT
     let isZoomedIn = false;
     let isAnimating = false;
+    let hoveredObject = null; // To track the currently hovered mesh
     const backButton = document.getElementById('back-button');
 
     // CAMERA STATE
@@ -81,6 +93,7 @@
     const modelParts = [
         {
             name: 'microscopeBody',
+            friendlyName: 'Microscope Body',
             path: 'microscope - body.glb',
             position: new THREE.Vector3(0, 0, 0),
             scale: new THREE.Vector3(1, 1, 1),
@@ -88,6 +101,7 @@
         },
         {
             name: 'fineAdjKnob',
+            friendlyName: 'Fine Adjustment Knob',
             path: 'microscope - fine adj knob.glb',
             position: new THREE.Vector3(.73, 1.24, 0.25),
             scale: new THREE.Vector3(1, 1, 1),
@@ -95,6 +109,7 @@
         },
         {
             name: 'objLenses',
+            friendlyName: 'Objective Lenses',
             path: 'microscope - obj lenses.glb',
             position: new THREE.Vector3(-.935, 2.76, -0.23),
             scale: new THREE.Vector3(1, 1, 1),
@@ -103,6 +118,7 @@
         },
         {
             name: 'powerSwitch',
+            friendlyName: 'Power Switch',
             path: 'microscope - power switch.glb',
             position: new THREE.Vector3(0.56, .27, 0.75),
             scale: new THREE.Vector3(1, 1, 1),
@@ -110,6 +126,7 @@
         },
         {
             name: 'slide',
+            friendlyName: 'Slide',
             path: 'microscope - slide.glb',
             position: new THREE.Vector3(-0.65, 1.85, -0.25),
             scale: new THREE.Vector3(1, 1, 1),
@@ -142,6 +159,10 @@
         },
     };
 
+    // EMISSIVE CONSTANTS
+    const FAINT_GLOW_EMISSIVE = 0x222222; // Emissive color for faint glow
+    const HOVER_GLOW_EMISSIVE = 0xffffff; // Emissive color for hover glow
+
     // INITIALIZATION
     init();
     animate();
@@ -159,10 +180,11 @@
 
         // Renderer
         const canvas = document.querySelector('#c');
-        renderer = new THREE.WebGLRenderer({ canvas, antiasias: true });
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ReinhardToneMapping;
 
         // Controls
         controls = new OrbitControls(camera, renderer.domElement);
@@ -191,9 +213,27 @@
         plane.receiveShadow = true;
         scene.add(plane);
 
+        // POST-PROCESSING (GLOW EFFECT)
+        const renderPass = new RenderPass(scene, camera);
+
+        bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            0, // strength
+            0, // radius
+            0  // threshold (glows anything brighter than 0.1)
+        );
+
+        const outputPass = new OutputPass();
+
+        composer = new EffectComposer(renderer);
+        composer.addPass(renderPass);
+        composer.addPass(bloomPass);
+        composer.addPass(outputPass);
+
         // EVENT LISTENERS
         window.addEventListener('resize', onWindowResize);
         window.addEventListener('click', onMouseClick);
+        window.addEventListener('mousemove', onMouseMove);
         backButton.addEventListener('click', zoomOut);
     }
 
@@ -214,10 +254,8 @@
                     model.rotation.copy(partInfo.rotation);
                 }
 
-                // Add to master group
+                // Add to master group and store ref in lookup
                 microscopeAssembly.add(model);
-                
-                // Store reference in lookup map
                 interactiveModels[partInfo.name] = model;
 
                 // Find meshes for clicking and shadows
@@ -229,6 +267,10 @@
                         if (partInfo.isInteractive) {
                             clickableMeshes.push(child);
                             child.userData.interactiveName = partInfo.name;
+                            // Store original material and add faint glow
+                            child.material = child.material.clone(); 
+                            child.userData.originalEmissive = child.material.emissive.clone();
+                            child.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
                         }
                     }
                 });
@@ -246,11 +288,61 @@
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // HOVER LOGIC
+    function onMouseMove(event) {
+        // No hovering if zoomed in or moving
+        if (isZoomedIn || isAnimating) {
+            // If there's a hovered object, reset it
+            if (hoveredObject) {
+                hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+                hoveredObject = null;
+            }
+            return;
+        }
+
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(clickableMeshes);
+
+        if (intersects.length > 0) {
+            const newHoveredObject = intersects[0].object;
+            
+            // If hovering a new object
+            if (newHoveredObject !== hoveredObject) {
+                // Reset the old one (if it exists)
+                if (hoveredObject) {
+                    hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+                }
+                
+                // Set new one
+                hoveredObject = newHoveredObject;
+                hoveredObject.material.emissive.setHex(HOVER_GLOW_EMISSIVE);
+            }
+        } else {
+            // Hovering nothing
+            if (hoveredObject) {
+                hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+                hoveredObject = null;
+            }
+        }
     }
 
     function onMouseClick(event) {
         if (isZoomedIn || isAnimating) return;
 
+        if (hoveredObject) {
+            const modelName = hoveredObject.userData.interactiveName;
+            if (modelName) {
+                zoomIn(modelName);
+            }
+            return;
+        }
+
+        // Use currently hovered object if it exists
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
@@ -261,35 +353,41 @@
         const intersects = raycaster.intersectObjects(clickableMeshes);
 
         if (intersects.length > 0) {
-            // Get clicked mesh
-            const clickedMesh = intersects[0].object;
-            
-            // Get 'interactiveName' "tagged" it with
-            const modelName = clickedMesh.userData.interactiveName;
-            
-            console.log("Clicked on mesh belonging to:", modelName);
-            
+            const modelName = intersects[0].object.userData.interactiveName;
             if (modelName) {
-                // Find matching interest point data
-                const pointData = INTEREST_POINTS[modelName];
-                cameraTarget = modelName;
-                if (pointData) {
-                    zoomIn(pointData);
-                }
+                zoomIn(modelName);
             }
         }
     }
 
     // ZOOM FUNCTIONS
-    function zoomIn(pointData) {
+    function zoomIn(modelName) {
+        const pointData = INTEREST_POINTS[modelName];
+        const modelData = modelParts.find(p => p.name === modelName);
+
+        if (!pointData || !modelData) {
+            console.error("No data for model:", modelName);
+            return;
+        }
+
         isZoomedIn = true;
         isAnimating = true;
         targetCameraPosition.copy(pointData.cameraPos);
         targetCameraLookAt.copy(pointData.lookAt);
         controls.enabled = false;
         backButton.classList.remove('hidden');
-        document.getElementById('info').innerText = 'You are now focused on ' + cameraTarget;
-        console.log(pointData);
+        
+        document.getElementById('info').innerText = `Now viewing: ${modelData.friendlyName}`;
+
+        // Stop all glows when zoomed in
+        if (hoveredObject) {
+            hoveredObject.material.emissive.copy(hoveredObject.userData.originalEmissive);
+            hoveredObject = null;
+        }
+        // Turn off faint glow for all meshes
+        clickableMeshes.forEach(mesh => {
+            mesh.material.emissive.copy(mesh.userData.originalEmissive);
+        });
     }
 
     function zoomOut() {
@@ -299,8 +397,12 @@
         targetCameraLookAt.copy(homeCameraLookAt);
         controls.enabled = true;
         backButton.classList.add('hidden');
-        cameraTarget = "home";
         document.getElementById('info').innerText = 'Click an interactive part to zoom in.';
+
+        // Re-enable faint glow for all meshes
+        clickableMeshes.forEach(mesh => {
+            mesh.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+        });
     }
 
     // ANIMATION LOOP
@@ -325,7 +427,7 @@
         // }
 
         controls.update(); 
-        renderer.render(scene, camera);
+        composer.render();
     }
     </script>
 </body>
