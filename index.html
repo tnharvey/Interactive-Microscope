@@ -175,7 +175,7 @@
         // Scene
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x111827);
-        scene.add(microscopeAssembly); // Add the master group to the scene
+        scene.add(microscopeAssembly); // Add the main group to the scene
 
         // Camera
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -193,6 +193,8 @@
         // Controls
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
+        controls.maxPolarAngle = (Math.PI / 2) - 0.05;
+        controls.enablePan = false;
         controls.target.copy(homeCameraLookAt);
         
         // LIGHTING
@@ -200,7 +202,7 @@
         scene.add(ambientLight);
         const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
         directionalLight.position.set(5, 10, 7.5);
-        directionalLight.castShadow = true;
+        directionalLight.castShadow = false;
         scene.add(directionalLight);
 
         // MODEL LOADING LOOP
@@ -272,7 +274,8 @@
                             clickableMeshes.push(child);
                             child.userData.interactiveName = partInfo.name;
                             // Store original material and add faint glow
-                            child.material = child.material.clone(); 
+                            child.material = child.material.clone();
+                            child.material.shading = THREE.SmoothShading;
                             child.userData.originalEmissive = child.material.emissive.clone();
                             child.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
                         }
