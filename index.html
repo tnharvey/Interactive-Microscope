@@ -82,6 +82,11 @@
     let isAnimating = false;
     let hoveredGroupName = null;
     const backButton = document.getElementById('back-button');
+    let isDragging = false;       // True when user is dragging fine adj knob
+    let previousMouseY = 0;   // Stores last mouse position for drag calculation
+    let isLightOn = false;        // Tracks state of power switch
+    let microscopeLight;      // Spotlight for microscope
+    let currentFocusName = null;
 
     // CAMERA STATE
     const homeCameraPosition = new THREE.Vector3(0, 4, 4);
@@ -102,7 +107,7 @@
             path: 'microscope - body.glb',
             position: new THREE.Vector3(0, 0, 0),
             scale: new THREE.Vector3(1, 1, 1),
-            isInteractive: true
+            isInteractive: false
         },
         {
             name: 'fineAdjKnob',
@@ -151,8 +156,8 @@
             lookAt: new THREE.Vector3(0.8, 1.5, 0)     // Point to look at
         },
         ['powerSwitch']: {
-            cameraPos: new THREE.Vector3(0.74, 1, 1.7), // Closeup position
-            lookAt: new THREE.Vector3(0.6, .3, 0)     // Point to look at
+            cameraPos: new THREE.Vector3(0.74, 0.3, 1.7), // Closeup position
+            lookAt: new THREE.Vector3(0.6, 0.7, 0)     // Point to look at
         },
         ['slide']: {
             cameraPos: new THREE.Vector3(-1.7, 2.2, 0), // Closeup position
@@ -165,7 +170,7 @@
     };
 
     // EMISSIVE CONSTANTS
-    const FAINT_GLOW_EMISSIVE = 0x222222; // Emissive color for faint glow
+    const FAINT_GLOW_EMISSIVE = 0x444444; // Emissive color for faint glow
     const HOVER_GLOW_EMISSIVE = 0x888888; // Emissive color for hover glow
 
     // INITIALIZATION
@@ -233,7 +238,7 @@
         // Controls
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.maxPolarAngle = (Math.PI / 2) - 0.05;
+        //controls.maxPolarAngle = (Math.PI / 2) - 0.05;
         controls.enablePan = false;
         controls.target.copy(homeCameraLookAt);
         
@@ -256,6 +261,15 @@
         directionalLight.shadow.normalBias = 0.02;
         scene.add(directionalLight);
 
+        // This light is toggled by power switch
+        microscopeLight = new THREE.SpotLight(0xffffff, 50, 10, Math.PI * 0.15, 0.5);
+        // Position at slide and point up at lens
+        microscopeLight.position.set(-0.65, 0.6, -0.25);
+        microscopeLight.target.position.set(-0.65, 2.5, -0.25);
+        //microscopeLight.visible = false;
+        scene.add(microscopeLight);
+        scene.add(microscopeLight.target);
+        
         // POST-PROCESSING (GLOW EFFECT)
         const renderPass = new RenderPass(scene, camera);
 
@@ -275,9 +289,12 @@
 
         // EVENT LISTENERS
         window.addEventListener('resize', onWindowResize);
-        window.addEventListener('click', onMouseClick);
-        window.addEventListener('mousemove', onMouseMove);
         backButton.addEventListener('click', zoomOut);
+        canvas.addEventListener('click', onMouseClick); 
+        canvas.addEventListener('mousemove', onMouseMove); 
+        canvas.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onDragMove);
+        window.addEventListener('mouseup', onMouseUp);
     }
 
     // LOAD MODEL FUNCTION
@@ -354,9 +371,7 @@
 
     // HOVER LOGIC
     function onMouseMove(event) {
-        // No hovering if zoomed in or moving
-        if (isZoomedIn || isAnimating) {
-            // If hovered group, reset it
+        if (currentFocusName || isAnimating || isDragging) {
             if (hoveredGroupName) {
                 setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
                 hoveredGroupName = null;
@@ -371,21 +386,14 @@
 
         let newHoveredGroupName = null;
         if (intersects.length > 0) {
-            // Get group name from hit mesh
             newHoveredGroupName = intersects[0].object.userData.interactiveName;
         }
 
-        // Check if hovered group changed
         if (newHoveredGroupName !== hoveredGroupName) {
-            // Reset old group (if it exists)
             if (hoveredGroupName) {
                 setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
             }
-            
-            // Set new group
             hoveredGroupName = newHoveredGroupName;
-            
-            // Highlight new group (if it exists)
             if (hoveredGroupName) {
                 setGroupEmissive(hoveredGroupName, HOVER_GLOW_EMISSIVE);
             }
@@ -424,72 +432,144 @@
     }
 
     function onMouseClick(event) {
-        if (isZoomedIn || isAnimating) return;
+        if (isAnimating || isDragging) return;
 
+        // Handle clicks while zoomed in
+        if (currentFocusName) {
+            if (currentFocusName === 'powerSwitch') {
+                // Check if click was on the power switch
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
+                const intersects = raycaster.intersectObjects(clickableMeshes);
+                if (intersects.length > 0 && intersects[0].object.userData.interactiveName === 'powerSwitch') {
+                    isLightOn = !isLightOn;
+                    microscopeLight.visible = isLightOn;
+                    
+                    // Power Switch rotation
+                    const switchModel = interactiveModels['powerSwitch'];
+                    if (switchModel) {
+                        const targetRotationY = isLightOn ? 0.26 : 0; 
+                        switchModel.rotation.y = targetRotationY;
+                    }
+                }
+            }
+            return;
+        }
+
+        // Handle clicks while zoomed out
         if (hoveredGroupName) {
             zoomIn(hoveredGroupName);
             return;
         }
+        
+        // Fallback: check raycaster just in case (for touch screens, etc.)
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
 
-        // Fallback raycast if not hovering (e.g., fast click)
+        const intersects = raycaster.intersectObjects(clickableMeshes);
+        if (intersects.length > 0) {
+            const modelName = intersects[0].object.userData.interactiveName;
+            if (modelName) zoomIn(modelName);
+        }
+    }
+
+    function onMouseDown(event) {
+        // Only start dragging if zoomed in on knob
+        if (isAnimating || currentFocusName !== 'fineAdjKnob') return;
+
+        // Check if the click was on knob
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
         
-        // Check for intersects with 'clickableMeshes' array
-        const intersects = raycaster.intersectObjects(clickableMeshes);
+        const knobModel = interactiveModels['fineAdjKnob'];
+        if (!knobModel) return;
+
+        const intersects = raycaster.intersectObject(knobModel, true);
 
         if (intersects.length > 0) {
-            const modelName = intersects[0].object.userData.interactiveName;
-            if (modelName) {
-                zoomIn(modelName);
-            }
+            isDragging = true;
+            previousMouseY = event.clientY;
+            document.body.style.cursor = 'ns-resize'; // Vertical resize cursor
         }
     }
 
-    // ZOOM FUNCTIONS
-    function zoomIn(modelName) {
-        const pointData = INTEREST_POINTS[modelName];
-        const modelData = modelParts.find(p => p.name === modelName);
+    function onDragMove(event) {
+        if (!isDragging) return;
 
-        if (!pointData || !modelData) {
-            console.error("No data for model:", modelName);
-            return;
+        const deltaY = event.clientY - previousMouseY;
+        const rotationSpeed = 0.01; // Knob sensitivity
+
+        const knobModel = interactiveModels['fineAdjKnob'];
+        if (knobModel) {
+            // Rotate knob around z-axis
+            knobModel.rotation.z += deltaY * rotationSpeed;
         }
+        previousMouseY = event.clientY;
+    }
 
-        isZoomedIn = true;
+    function onMouseUp(event) {
+        isDragging = false;
+        document.body.style.cursor = 'default';
+    }
+
+    function zoomIn(modelName) {
+        const modelData = INTEREST_POINTS[modelName];
+        const partData = modelParts.find(p => p.name === modelName);
+        if (!modelData || !partData) return;
+
+        currentFocusName = modelName; // Set current focus
         isAnimating = true;
-        targetCameraPosition.copy(pointData.cameraPos);
-        targetCameraLookAt.copy(pointData.lookAt);
+        targetCameraPosition.copy(modelData.cameraPos);
+        targetCameraLookAt.copy(modelData.lookAt);
         controls.enabled = false;
         backButton.classList.remove('hidden');
-        
-        document.getElementById('info').innerText = `Now viewing: ${modelData.friendlyName}`;
+        document.getElementById('info').innerText = `Now viewing: ${partData.friendlyName || modelName}`;
 
-        // Stop all glows when zoomed in
+        // Stop all glow effects
         if (hoveredGroupName) {
             setGroupEmissive(hoveredGroupName, null); // null resets to original
             hoveredGroupName = null;
         }
-        // Turn off faint glow for all meshes
-        clickableMeshes.forEach(mesh => {
-            mesh.material.emissive.copy(mesh.userData.originalEmissive);
+        modelParts.forEach(part => {
+            if (part.isInteractive) setGroupEmissive(part.name, null);
         });
+        
+        // Set glow for *only* the focused object
+        // --- UPDATED: Removed special case for green glow ---
+        setGroupEmissive(currentFocusName, HOVER_GLOW_EMISSIVE);
     }
 
     function zoomOut() {
-        isZoomedIn = false;
+        currentFocusName = null; // Clear focus
         isAnimating = true;
+        isDragging = false;
         targetCameraPosition.copy(homeCameraPosition);
         targetCameraLookAt.copy(homeCameraLookAt);
         controls.enabled = true;
         backButton.classList.add('hidden');
         document.getElementById('info').innerText = 'Click an interactive part to zoom in.';
+        document.body.style.cursor = 'default';
 
-        // Re-enable faint glow for all meshes
-        clickableMeshes.forEach(mesh => {
-            mesh.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+        // Re-enable faint glow for all interactive models
+        modelParts.forEach(part => {
+            if (part.isInteractive) {
+                setGroupEmissive(part.name, FAINT_GLOW_EMISSIVE);
+            }
         });
+
+        // Turn off microscope light if it was on
+        isLightOn = false;
+        microscopeLight.visible = false;
+
+        // --- NEW: Reset switch rotation on zoom out ---
+        const switchModel = interactiveModels['powerSwitch'];
+        if (switchModel) {
+            switchModel.rotation.z = 0; // Reset to "off" position
+        }
     }
 
     // ANIMATION LOOP
