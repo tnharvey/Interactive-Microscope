@@ -14,6 +14,7 @@ This is a test project to create an interactive 3D microscope to be used in an A
 - Textures have cross-hatching, need to smooth them out (probably just my own ignorance)
 
 ### Next Steps:
+- Interction with power button (flips to turn light on), fine adjustment knob (turns left or right to adjust focus), and objective lenses (rotates lens hub to select for zoom)
 - Adding information layers for each interactive area (e.g. descriptive information for objective lenses, what they do, how to use them in the simulation to get different results)
 - Adding labels when in Body view. Possibly add labels for each interactive area that are visible in Home view
 - Adjust bloom effect or switch to something closer to an outline effect (might require adding additional mesh that only has outlines and loading has glowing wireframe)
