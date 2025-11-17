@@ -17,4 +17,5 @@ This is a test project to create an interactive 3D microscope to be used in an A
 - Creating simulation elements (ability to view through eyepieces and see results of changing focus knob, slide position, etc.)
 - Creating a "slide collection" that allows for switching out the slide to view different specimens.
 - Adding help features
+- Cleaning and restructuring code (separate script and styles)
 - Setting up hooks for connecting to Captivate and Storyline
