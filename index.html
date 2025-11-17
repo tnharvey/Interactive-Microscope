@@ -70,6 +70,7 @@
     const homeCameraLookAt = new THREE.Vector3(0, 3, 0);
     const targetCameraPosition = new THREE.Vector3();
     const targetCameraLookAt = new THREE.Vector3();
+    let cameraTarget = "home";
 
     // NEW: MODELS
     const microscopeAssembly = new THREE.Group(); // Main group
@@ -95,7 +96,7 @@
         {
             name: 'objLenses',
             path: 'microscope - obj lenses.glb',
-            position: new THREE.Vector3(-1, 2.5, 0),
+            position: new THREE.Vector3(-.935, 2.76, -0.23),
             scale: new THREE.Vector3(1, 1, 1),
             isInteractive: true,
             rotation: new THREE.Euler(0, 0, 6)
@@ -103,14 +104,14 @@
         {
             name: 'powerSwitch',
             path: 'microscope - power switch.glb',
-            position: new THREE.Vector3(1.5, 2.2, 0.1),
+            position: new THREE.Vector3(0.56, .27, 0.75),
             scale: new THREE.Vector3(1, 1, 1),
             isInteractive: true
         },
         {
             name: 'slide',
             path: 'microscope - slide.glb',
-            position: new THREE.Vector3(1.5, 2.2, 0.1),
+            position: new THREE.Vector3(-0.65, 1.85, -0.25),
             scale: new THREE.Vector3(1, 1, 1),
             isInteractive: true
         }
@@ -124,20 +125,20 @@
             lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
         },
         ['objLenses']: {
-            cameraPos: new THREE.Vector3(-3, 2.5, 0.5), // Closeup position
+            cameraPos: new THREE.Vector3(-2.5, 2.5, 0.5), // Closeup position
             lookAt: new THREE.Vector3(0.8, 1.5, 0)     // Point to look at
         },
         ['powerSwitch']: {
-            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
-            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+            cameraPos: new THREE.Vector3(0.74, 1, 1.7), // Closeup position
+            lookAt: new THREE.Vector3(0.6, .3, 0)     // Point to look at
         },
         ['slide']: {
-            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
-            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+            cameraPos: new THREE.Vector3(-1.7, 2.2, 0), // Closeup position
+            lookAt: new THREE.Vector3(0.8, 1.5, 0)     // Point to look at
         },
         ['fineAdjKnob']: {
-            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
-            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+            cameraPos: new THREE.Vector3(0.74, 1.6, 1.7), // Closeup position
+            lookAt: new THREE.Vector3(0.6, 1.6, 0)     // Point to look at
         },
     };
 
@@ -271,6 +272,7 @@
             if (modelName) {
                 // Find matching interest point data
                 const pointData = INTEREST_POINTS[modelName];
+                cameraTarget = modelName;
                 if (pointData) {
                     zoomIn(pointData);
                 }
@@ -286,7 +288,8 @@
         targetCameraLookAt.copy(pointData.lookAt);
         controls.enabled = false;
         backButton.classList.remove('hidden');
-        document.getElementById('info').innerText = 'You are now focused on an interactive area.';
+        document.getElementById('info').innerText = 'You are now focused on ' + cameraTarget;
+        console.log(pointData);
     }
 
     function zoomOut() {
@@ -296,6 +299,7 @@
         targetCameraLookAt.copy(homeCameraLookAt);
         controls.enabled = true;
         backButton.classList.add('hidden');
+        cameraTarget = "home";
         document.getElementById('info').innerText = 'Click an interactive part to zoom in.';
     }
 
