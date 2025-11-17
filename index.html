@@ -20,15 +20,20 @@
             top: 20px;
             width: 100%;
             text-align: center;
-            z-index: 100;
+            z-index: ;
             display: block;
             color: white;
         }
         #back-button {
+            position: absolute;
+            z-index: 200;
             padding: 6px 40px 6px 40px;
             background-color: #7d8fa7;
             border-radius: 6px;
-            margin: 10px;
+            margin: 10px; /* This will be applied from the top/left */
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
         }
     </style>
 </head>
@@ -74,7 +79,7 @@
     // STATE MANAGEMENT
     let isZoomedIn = false;
     let isAnimating = false;
-    let hoveredObject = null; // To track the currently hovered mesh
+    let hoveredGroupName = null;
     const backButton = document.getElementById('back-button');
 
     // CAMERA STATE
@@ -82,9 +87,8 @@
     const homeCameraLookAt = new THREE.Vector3(0, 3, 0);
     const targetCameraPosition = new THREE.Vector3();
     const targetCameraLookAt = new THREE.Vector3();
-    let cameraTarget = "home";
 
-    // NEW: MODELS
+    // MODELS
     const microscopeAssembly = new THREE.Group(); // Main group
     const interactiveModels = {}; // Lookup for models by name
     let clickableMeshes = []; // Array of meshes for raycasting
@@ -97,7 +101,7 @@
             path: 'microscope - body.glb',
             position: new THREE.Vector3(0, 0, 0),
             scale: new THREE.Vector3(1, 1, 1),
-            isInteractive: false
+            isInteractive: true
         },
         {
             name: 'fineAdjKnob',
@@ -111,10 +115,10 @@
             name: 'objLenses',
             friendlyName: 'Objective Lenses',
             path: 'microscope - obj lenses.glb',
-            position: new THREE.Vector3(-.935, 2.76, -0.23),
+            position: new THREE.Vector3(-.9272, 2.749, -0.23),
             scale: new THREE.Vector3(1, 1, 1),
             isInteractive: true,
-            rotation: new THREE.Euler(0, 0, 6)
+            rotation: new THREE.Euler(0, 0, 5.93)
         },
         {
             name: 'powerSwitch',
@@ -161,7 +165,7 @@
 
     // EMISSIVE CONSTANTS
     const FAINT_GLOW_EMISSIVE = 0x222222; // Emissive color for faint glow
-    const HOVER_GLOW_EMISSIVE = 0xffffff; // Emissive color for hover glow
+    const HOVER_GLOW_EMISSIVE = 0x888888; // Emissive color for hover glow
 
     // INITIALIZATION
     init();
@@ -295,10 +299,10 @@
     function onMouseMove(event) {
         // No hovering if zoomed in or moving
         if (isZoomedIn || isAnimating) {
-            // If there's a hovered object, reset it
-            if (hoveredObject) {
-                hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
-                hoveredObject = null;
+            // If hovered group, reset it
+            if (hoveredGroupName) {
+                setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
+                hoveredGroupName = null;
             }
             return;
         }
@@ -308,47 +312,59 @@
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(clickableMeshes);
 
+        let newHoveredGroupName = null;
         if (intersects.length > 0) {
-            const newHoveredObject = intersects[0].object;
-            
-            // If hovering a new object
-            if (newHoveredObject !== hoveredObject) {
-                // Reset the old one (if it exists)
-                if (hoveredObject) {
-                    hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
-                }
-                
-                // Set new one
-                hoveredObject = newHoveredObject;
-                hoveredObject.material.emissive.setHex(HOVER_GLOW_EMISSIVE);
+            // Get group name from hit mesh
+            newHoveredGroupName = intersects[0].object.userData.interactiveName;
+        }
+
+        // Check if hovered group changed
+        if (newHoveredGroupName !== hoveredGroupName) {
+            // Reset old group (if it exists)
+            if (hoveredGroupName) {
+                setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
             }
-        } else {
-            // Hovering nothing
-            if (hoveredObject) {
-                hoveredObject.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
-                hoveredObject = null;
+            
+            // Set new group
+            hoveredGroupName = newHoveredGroupName;
+            
+            // Highlight new group (if it exists)
+            if (hoveredGroupName) {
+                setGroupEmissive(hoveredGroupName, HOVER_GLOW_EMISSIVE);
             }
         }
+    }
+
+    // HELPER FUNCTION for setting group glow
+    function setGroupEmissive(modelName, emissiveValue) {
+        const model = interactiveModels[modelName];
+        if (!model) return;
+
+        model.traverse((child) => {
+            if (child.isMesh && child.userData.interactiveName === modelName) {
+                if (emissiveValue !== null) {
+                    child.material.emissive.setHex(emissiveValue);
+                } else {
+                    // Reset to original (null) by copying stored value
+                    child.material.emissive.copy(child.userData.originalEmissive);
+                }
+            }
+        });
     }
 
     function onMouseClick(event) {
         if (isZoomedIn || isAnimating) return;
 
-        if (hoveredObject) {
-            const modelName = hoveredObject.userData.interactiveName;
-            if (modelName) {
-                zoomIn(modelName);
-            }
+        if (hoveredGroupName) {
+            zoomIn(hoveredGroupName);
             return;
         }
 
-        // Use currently hovered object if it exists
+        // Fallback raycast if not hovering (e.g., fast click)
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
-        console.log(camera.position);
         
-        // CLICK LOGIC
         // Check for intersects with 'clickableMeshes' array
         const intersects = raycaster.intersectObjects(clickableMeshes);
 
@@ -380,9 +396,9 @@
         document.getElementById('info').innerText = `Now viewing: ${modelData.friendlyName}`;
 
         // Stop all glows when zoomed in
-        if (hoveredObject) {
-            hoveredObject.material.emissive.copy(hoveredObject.userData.originalEmissive);
-            hoveredObject = null;
+        if (hoveredGroupName) {
+            setGroupEmissive(hoveredGroupName, null); // null resets to original
+            hoveredGroupName = null;
         }
         // Turn off faint glow for all meshes
         clickableMeshes.forEach(mesh => {
@@ -408,7 +424,9 @@
     // ANIMATION LOOP
     function animate() {
         requestAnimationFrame(animate);
-        const delta = 0.05;
+        
+        // Damping value - adjust to speed up movements
+        const delta = 0.1;
 
         if (isAnimating) {
             camera.position.lerp(targetCameraPosition, delta);
