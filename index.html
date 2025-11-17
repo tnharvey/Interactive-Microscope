@@ -68,6 +68,7 @@
     import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
     // CORE SETUP
     let scene, camera, renderer, controls;
@@ -174,7 +175,7 @@
     function init() {
         // Scene
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x111827);
+        //scene.background = new THREE.Color(0x111827);
         scene.add(microscopeAssembly); // Add the main group to the scene
 
         // Camera
@@ -188,7 +189,46 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ReinhardToneMapping;
+
+        // Load a 360 HDR image to use for lighting and reflections
+        const rgbeLoader = new RGBELoader();
+        rgbeLoader.load(
+            'hospital_room_4k.hdr', 
+            (texture) => {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                
+                // Set it as the scene's background and environment
+                //scene.background = texture;
+                scene.environment = texture;
+                
+                console.log("Environment map loaded.");
+
+                // --- MOVED MODEL LOADING HERE ---
+                // Now we load models *only after* the environment is ready.
+                modelParts.forEach(partInfo => {
+                    loadModel(partInfo);
+                });
+                
+                // --- MOVED PLANE CREATION HERE ---
+                // The plane's material will also benefit from reflections.
+                const planeGeometry = new THREE.PlaneGeometry(20, 20);
+                const planeMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0x4B5563,
+                    roughness: 0.8, 
+                    metalness: 0.2
+                });
+                const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+                plane.rotation.x = -Math.PI / 2;
+                plane.receiveShadow = true;
+                scene.add(plane);
+            },
+            undefined,
+            (error) => {
+                console.error('An error occurred loading the environment map', error);
+            }
+        );
 
         // Controls
         controls = new OrbitControls(camera, renderer.domElement);
@@ -198,26 +238,23 @@
         controls.target.copy(homeCameraLookAt);
         
         // LIGHTING
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
         scene.add(ambientLight);
         const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
         directionalLight.position.set(5, 10, 7.5);
-        directionalLight.castShadow = false;
+        directionalLight.castShadow = true;
+        directionalLight.shadow.normalBias = 0.02;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 50;
+        directionalLight.shadow.camera.left = -25;
+        directionalLight.shadow.camera.right = 25;
+        directionalLight.shadow.camera.top = 25;
+        directionalLight.shadow.camera.bottom = -25;
+        directionalLight.shadow.bias = -0.0001; 
+        directionalLight.shadow.normalBias = 0.02;
         scene.add(directionalLight);
-
-        // MODEL LOADING LOOP
-        // Loop through model data and load each part
-        modelParts.forEach(partInfo => {
-            loadModel(partInfo);
-        });
-        
-        // Add ground plane
-        const planeGeometry = new THREE.PlaneGeometry(20, 20);
-        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x4B5563 });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-        plane.rotation.x = -Math.PI / 2;
-        plane.receiveShadow = true;
-        scene.add(plane);
 
         // POST-PROCESSING (GLOW EFFECT)
         const renderPass = new RenderPass(scene, camera);
@@ -267,17 +304,34 @@
                 // Find meshes for clicking and shadows
                 model.traverse((child) => {
                     if (child.isMesh) {
-                        child.castShadow = true;
+                        child.castShadow = false;
                         child.receiveShadow = true;
                         
                         if (partInfo.isInteractive) {
                             clickableMeshes.push(child);
                             child.userData.interactiveName = partInfo.name;
-                            // Store original material and add faint glow
-                            child.material = child.material.clone();
-                            child.material.shading = THREE.SmoothShading;
-                            child.userData.originalEmissive = child.material.emissive.clone();
-                            child.material.emissive.setHex(FAINT_GLOW_EMISSIVE);
+                            
+                            const processMaterial = (mat) => {
+                                // (metalness, roughness, maps, etc.)
+                                const newMat = mat.clone();
+                                
+                                // Store original emissive value
+                                // Ensure userData exists
+                                if (!newMat.userData) newMat.userData = {}; 
+                                newMat.userData.originalEmissive = newMat.emissive.clone();
+                                
+                                // Set the faint glow
+                                newMat.emissive.setHex(FAINT_GLOW_EMISSIVE);
+                                return newMat;
+                            };
+
+                            if (Array.isArray(child.material)) {
+                                // Mesh has multiple materials
+                                child.material = child.material.map(processMaterial);
+                            } else if (child.material) {
+                                // Mesh has one material
+                                child.material = processMaterial(child.material);
+                            }
                         }
                     }
                 });
@@ -345,11 +399,25 @@
 
         model.traverse((child) => {
             if (child.isMesh && child.userData.interactiveName === modelName) {
-                if (emissiveValue !== null) {
-                    child.material.emissive.setHex(emissiveValue);
-                } else {
-                    // Reset to original (null) by copying stored value
-                    child.material.emissive.copy(child.userData.originalEmissive);
+                const setEmissive = (mat) => {
+                    if (!mat.userData || !mat.userData.originalEmissive) {
+                        // This material wasn't processed (e.g., non-interactive part of group)
+                        // Or it's a part of the group we shouldn't be glowing
+                        return; 
+                    }
+
+                    if (emissiveValue !== null) {
+                        mat.emissive.setHex(emissiveValue);
+                    } else {
+                        // Reset to original (null) by copying stored value
+                        mat.emissive.copy(mat.userData.originalEmissive);
+                    }
+                };
+
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(setEmissive);
+                } else if (child.material) {
+                    setEmissive(child.material);
                 }
             }
         });
