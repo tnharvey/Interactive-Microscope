@@ -5,7 +5,7 @@
 This is a test project to create an interactive 3D microscope to be used in an Adobe Captivate or Articulate 360 portfolio project. The model was downloaded free from [CG Trader](https://www.cgtrader.com/free-3d-models/science/laboratory/microscope-4a4bdeaa-38ab-4680-ad4a-a9193c55206a) (royalty free).
 
 ### Current State:
-- Model is loaded, parts are positioned, and racast is picking up interaction on each of the relevant areas
+- Model is loaded, parts are positioned, and raycast is picking up interaction on each of the relevant areas
 - Hover results in bloom effect to indicate what new information will be displayed and where the camera will reposition to
 - Clicking results in camera movement to focus on the selected object
 
