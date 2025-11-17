@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 3D Box</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            z-index: 100;
+            display: block;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+
+    <div id="info" class="text-white text-center p-4 text-lg">
+        Click an interactive part to zoom in.
+    </div>
+
+    <button id="back-button" class="hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+        </svg>          
+    </button>
+    <canvas id="c"></canvas>
+
+    <!-- Import Three.js and OrbitControls -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // CORE SETUP
+    let scene, camera, renderer, controls;
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const loader = new GLTFLoader();
+
+    // STATE MANAGEMENT
+    let isZoomedIn = false;
+    let isAnimating = false;
+    const backButton = document.getElementById('back-button');
+
+    // CAMERA STATE
+    const homeCameraPosition = new THREE.Vector3(0, 4, 4);
+    const homeCameraLookAt = new THREE.Vector3(0, 3, 0);
+    const targetCameraPosition = new THREE.Vector3();
+    const targetCameraLookAt = new THREE.Vector3();
+
+    // NEW: MODELS
+    const microscopeAssembly = new THREE.Group(); // Main group
+    const interactiveModels = {}; // Lookup for models by name
+    let clickableMeshes = []; // Array of meshes for raycasting
+
+    // MODEL DATA
+    const modelParts = [
+        {
+            name: 'microscopeBody',
+            path: 'microscope - body.glb',
+            position: new THREE.Vector3(0, 0, 0),
+            scale: new THREE.Vector3(1, 1, 1),
+            isInteractive: false
+        },
+        {
+            name: 'fineAdjKnob',
+            path: 'microscope - fine adj knob.glb',
+            position: new THREE.Vector3(.73, 1.24, 0.25),
+            scale: new THREE.Vector3(1, 1, 1),
+            isInteractive: true
+        },
+        {
+            name: 'objLenses',
+            path: 'microscope - obj lenses.glb',
+            position: new THREE.Vector3(-1, 2.5, 0),
+            scale: new THREE.Vector3(1, 1, 1),
+            isInteractive: true,
+            rotation: new THREE.Euler(0, 0, 6)
+        },
+        {
+            name: 'powerSwitch',
+            path: 'microscope - power switch.glb',
+            position: new THREE.Vector3(1.5, 2.2, 0.1),
+            scale: new THREE.Vector3(1, 1, 1),
+            isInteractive: true
+        },
+        {
+            name: 'slide',
+            path: 'microscope - slide.glb',
+            position: new THREE.Vector3(1.5, 2.2, 0.1),
+            scale: new THREE.Vector3(1, 1, 1),
+            isInteractive: true
+        }
+    ];
+
+    // INTEREST POINTS
+    // Keys here MUST match the 'name' from modelParts list
+    const INTEREST_POINTS = {
+        ['microscopeBody']: {
+            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
+            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+        },
+        ['objLenses']: {
+            cameraPos: new THREE.Vector3(-3, 2.5, 0.5), // Closeup position
+            lookAt: new THREE.Vector3(0.8, 1.5, 0)     // Point to look at
+        },
+        ['powerSwitch']: {
+            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
+            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+        },
+        ['slide']: {
+            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
+            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+        },
+        ['fineAdjKnob']: {
+            cameraPos: new THREE.Vector3(3, 2, 4), // Closeup position
+            lookAt: new THREE.Vector3(1, 2, 0)     // Point to look at
+        },
+    };
+
+    // INITIALIZATION
+    init();
+    animate();
+
+    function init() {
+        // Scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111827);
+        scene.add(microscopeAssembly); // Add the master group to the scene
+
+        // Camera
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.copy(homeCameraPosition); 
+        camera.lookAt(homeCameraLookAt);
+
+        // Renderer
+        const canvas = document.querySelector('#c');
+        renderer = new THREE.WebGLRenderer({ canvas, antiasias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+
+        // Controls
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.copy(homeCameraLookAt);
+        
+        // LIGHTING
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        directionalLight.position.set(5, 10, 7.5);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+
+        // MODEL LOADING LOOP
+        // Loop through model data and load each part
+        modelParts.forEach(partInfo => {
+            loadModel(partInfo);
+        });
+        
+        // Add ground plane
+        const planeGeometry = new THREE.PlaneGeometry(20, 20);
+        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x4B5563 });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // EVENT LISTENERS
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('click', onMouseClick);
+        backButton.addEventListener('click', zoomOut);
+    }
+
+    // LOAD MODEL FUNCTION
+    function loadModel(partInfo) {
+        loader.load(
+            partInfo.path,
+            (gltf) => {
+                const model = gltf.scene;
+                
+                // Set properties
+                model.position.copy(partInfo.position);
+                model.scale.copy(partInfo.scale);
+                model.name = partInfo.name;
+
+                // Apply initial rotation if defined
+                if (partInfo.rotation) {
+                    model.rotation.copy(partInfo.rotation);
+                }
+
+                // Add to master group
+                microscopeAssembly.add(model);
+                
+                // Store reference in lookup map
+                interactiveModels[partInfo.name] = model;
+
+                // Find meshes for clicking and shadows
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        
+                        if (partInfo.isInteractive) {
+                            clickableMeshes.push(child);
+                            child.userData.interactiveName = partInfo.name;
+                        }
+                    }
+                });
+                console.log(`Loaded and positioned: ${partInfo.name}`);
+            },
+            undefined,
+            (error) => {
+                console.error(`Error loading ${partInfo.name}:`, error);
+            }
+        );
+    }
+
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onMouseClick(event) {
+        if (isZoomedIn || isAnimating) return;
+
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        console.log(camera.position);
+        
+        // CLICK LOGIC
+        // Check for intersects with 'clickableMeshes' array
+        const intersects = raycaster.intersectObjects(clickableMeshes);
+
+        if (intersects.length > 0) {
+            // Get clicked mesh
+            const clickedMesh = intersects[0].object;
+            
+            // Get 'interactiveName' "tagged" it with
+            const modelName = clickedMesh.userData.interactiveName;
+            
+            console.log("Clicked on mesh belonging to:", modelName);
+            
+            if (modelName) {
+                // Find matching interest point data
+                const pointData = INTEREST_POINTS[modelName];
+                if (pointData) {
+                    zoomIn(pointData);
+                }
+            }
+        }
+    }
+
+    // ZOOM FUNCTIONS
+    function zoomIn(pointData) {
+        isZoomedIn = true;
+        isAnimating = true;
+        targetCameraPosition.copy(pointData.cameraPos);
+        targetCameraLookAt.copy(pointData.lookAt);
+        controls.enabled = false;
+        backButton.classList.remove('hidden');
+        document.getElementById('info').innerText = 'You are now focused on an interactive area.';
+    }
+
+    function zoomOut() {
+        isZoomedIn = false;
+        isAnimating = true;
+        targetCameraPosition.copy(homeCameraPosition);
+        targetCameraLookAt.copy(homeCameraLookAt);
+        controls.enabled = true;
+        backButton.classList.add('hidden');
+        document.getElementById('info').innerText = 'Click an interactive part to zoom in.';
+    }
+
+    // ANIMATION LOOP
+    function animate() {
+        requestAnimationFrame(animate);
+        const delta = 0.05;
+
+        if (isAnimating) {
+            camera.position.lerp(targetCameraPosition, delta);
+            controls.target.lerp(targetCameraLookAt, delta);
+
+            const distance = camera.position.distanceTo(targetCameraPosition);
+            if (distance < 0.01) {
+                camera.position.copy(targetCameraPosition);
+                controls.target.copy(targetCameraLookAt);
+                isAnimating = false;
+            }
+        }
+
+        // if (interactiveModels.fineKnob) {
+        //     interactiveModels.fineKnob.rotation.y += 0.01;
+        // }
+
+        controls.update(); 
+        renderer.render(scene, camera);
+    }
+    </script>
+</body>
+</html>
