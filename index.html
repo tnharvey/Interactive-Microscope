@@ -80,13 +80,15 @@
     // STATE MANAGEMENT
     let isZoomedIn = false;
     let isAnimating = false;
-    let hoveredGroupName = null;
     const backButton = document.getElementById('back-button');
+    let currentFocusName = null;
+
+    // INTERACTION STATES
     let isDragging = false;       // True when user is dragging fine adj knob
     let previousMouseY = 0;   // Stores last mouse position for drag calculation
     let isLightOn = false;        // Tracks state of power switch
     let microscopeLight;      // Spotlight for microscope
-    let currentFocusName = null;
+
 
     // CAMERA STATE
     const homeCameraPosition = new THREE.Vector3(0, 4, 4);
@@ -172,6 +174,7 @@
     // EMISSIVE CONSTANTS
     const FAINT_GLOW_EMISSIVE = 0x444444; // Emissive color for faint glow
     const HOVER_GLOW_EMISSIVE = 0x888888; // Emissive color for hover glow
+    let hoveredGroupName = null;
 
     // INITIALIZATION
     init();
@@ -266,7 +269,7 @@
         // Position at slide and point up at lens
         microscopeLight.position.set(-0.65, 0.6, -0.25);
         microscopeLight.target.position.set(-0.65, 2.5, -0.25);
-        //microscopeLight.visible = false;
+        microscopeLight.visible = false;
         scene.add(microscopeLight);
         scene.add(microscopeLight.target);
         
@@ -290,11 +293,16 @@
         // EVENT LISTENERS
         window.addEventListener('resize', onWindowResize);
         backButton.addEventListener('click', zoomOut);
-        canvas.addEventListener('click', onMouseClick); 
+        canvas.addEventListener('click', onMouseClick);
         canvas.addEventListener('mousemove', onMouseMove); 
         canvas.addEventListener('mousedown', onMouseDown);
         window.addEventListener('mousemove', onDragMove);
         window.addEventListener('mouseup', onMouseUp);
+        
+        // LISTENERS FOR TOUCH DRAGGING
+        canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', onTouchEnd);
     }
 
     // LOAD MODEL FUNCTION
@@ -516,6 +524,48 @@
         document.body.style.cursor = 'default';
     }
 
+    // DRAG HANDLERS for TOUCH
+    function onTouchStart(event) {
+        // Only allow drag if zoomed in on knob
+        if (isAnimating || currentFocusName !== 'fineAdjKnob') return;
+
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = - (touch.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+
+        const knobModel = interactiveModels['fineAdjKnob'];
+        if (!knobModel) return;
+        const intersects = raycaster.intersectObject(knobModel, true);
+
+        if (intersects.length > 0) {
+            isDragging = true;
+            previousMouseY = touch.clientY;
+            event.preventDefault();
+        }
+    }
+
+    function onTouchMove(event) {
+        if (!isDragging) return;
+        
+        // Stop screen from scrolling while rotating knob
+        event.preventDefault();
+
+        const touch = event.touches[0];
+        const deltaY = touch.clientY - previousMouseY;
+        const rotationSpeed = 0.01;
+
+        const knobModel = interactiveModels['fineAdjKnob'];
+        if (knobModel) {
+            knobModel.rotation.z += deltaY * rotationSpeed;
+        }
+        previousMouseY = touch.clientY;
+    }
+
+    function onTouchEnd(event) {
+        isDragging = false;
+    }
+
     function zoomIn(modelName) {
         const modelData = INTEREST_POINTS[modelName];
         const partData = modelParts.find(p => p.name === modelName);
@@ -538,8 +588,6 @@
             if (part.isInteractive) setGroupEmissive(part.name, null);
         });
         
-        // Set glow for *only* the focused object
-        // --- UPDATED: Removed special case for green glow ---
         setGroupEmissive(currentFocusName, HOVER_GLOW_EMISSIVE);
     }
 
@@ -562,14 +610,8 @@
         });
 
         // Turn off microscope light if it was on
-        isLightOn = false;
-        microscopeLight.visible = false;
-
-        // --- NEW: Reset switch rotation on zoom out ---
-        const switchModel = interactiveModels['powerSwitch'];
-        if (switchModel) {
-            switchModel.rotation.z = 0; // Reset to "off" position
-        }
+        //isLightOn = false;
+        //microscopeLight.visible = false;
     }
 
     // ANIMATION LOOP
@@ -590,10 +632,6 @@
                 isAnimating = false;
             }
         }
-
-        // if (interactiveModels.fineKnob) {
-        //     interactiveModels.fineKnob.rotation.y += 0.01;
-        // }
 
         controls.update(); 
         composer.render();
