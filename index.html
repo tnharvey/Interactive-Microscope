@@ -577,7 +577,7 @@
         requestAnimationFrame(animate);
         
         // Damping value - adjust to speed up movements
-        const delta = 0.1;
+        const delta = 0.05;
 
         if (isAnimating) {
             camera.position.lerp(targetCameraPosition, delta);
