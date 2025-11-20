@@ -311,7 +311,7 @@
         // Configure look of outline (adjust values to tune look)
         outlinePass.edgeStrength = 4.0;
         outlinePass.edgeThickness = 0.01;
-        outlinePass.edgeGlow = 0.0; // Sharp outline, no glow
+        outlinePass.edgeGlow = 0.5; // Sharp outline, no glow
         outlinePass.visibleEdgeColor.set(0xffff00); // Bright Yellow/Gold for hover
         outlinePass.hiddenEdgeColor.set(0x000000); // Black behind objects
         
@@ -398,8 +398,8 @@
     // INITIAL OUTLINE SETUP
     function setInitialOutline() {
         // Set all interactive parts to be faintly outlined initially
-        outlinePass.edgeStrength = 1.0;
-        outlinePass.visibleEdgeColor.set(0x444444);
+        outlinePass.edgeStrength = 4.0;
+        outlinePass.visibleEdgeColor.set(0xaaaaaa);
         outlinePass.selectedObjects = allInteractiveMeshes;
     }
 
@@ -420,32 +420,25 @@
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(clickableMeshes);
-
         let newHoveredGroupName = null;
+        
         if (intersects.length > 0) {
             newHoveredGroupName = intersects[0].object.userData.interactiveName;
+        }
+        else {
+            setInitialOutline();
         }
         
         // Outline Hover Logic
         if (newHoveredGroupName !== hoveredGroupName) {
             hoveredGroupName = newHoveredGroupName;
             
-            // Always reset to initial state
-            outlinePass.selectedObjects = allInteractiveMeshes.slice();
-            outlinePass.edgeStrength = 1.0;
-            outlinePass.visibleEdgeColor.set(0x444444);
-
-            if (hoveredGroupName) {
-                // Find meshes corresponding to hovered group
-                const meshesToHighlight = allInteractiveMeshes.filter(mesh => 
-                    mesh.userData.interactiveName === hoveredGroupName
-                );
-
-                // Set high-strength, bright yellow outline for hovered group
-                outlinePass.edgeStrength = 5.0;
-                outlinePass.visibleEdgeColor.set(0xffff00); // Bright Yellow/Gold
-                outlinePass.selectedObjects = meshesToHighlight;
-            }
+            const meshesToHighlight = allInteractiveMeshes.filter(mesh => 
+                mesh.userData.interactiveName === hoveredGroupName
+            );
+            outlinePass.edgeStrength = 10.0;
+            outlinePass.visibleEdgeColor.set(0xffff00);
+            outlinePass.selectedObjects = meshesToHighlight;
         }
     }
 
