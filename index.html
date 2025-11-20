@@ -91,9 +91,21 @@
     // INTERACTION STATES
     let isDragging = false;       // True when user is dragging fine adj knob
     let previousMouseY = 0;   // Stores last mouse position for drag calculation
-    let isLightOn = false;        // Tracks state of power switch
+    let isLightOn = false;        // Tracks power switch
     let microscopeLight;      // Spotlight for microscope
+    let isSnapping = false; // Track snapping animation
 
+    // LENS ROTATION STATE
+    let currentLensAngle = 0; // Total rotation angle around local Y-axis
+    let targetLensAngle = 0; // Angle to snap to
+    let initialLensQuaternion = new THREE.Quaternion(); // Store original tilt
+
+    // CUSTOM LENS SNAP POINTS (RADIANS)
+    const TARGET_LENS_ANGLES = [
+        0,                                  // Initial position (0 degrees)
+        THREE.MathUtils.degToRad(140),       // Example stop point 1
+        THREE.MathUtils.degToRad(230)      // Example stop point 2
+    ];
 
     // CAMERA STATE
     const homeCameraPosition = new THREE.Vector3(0, 4, 4);
@@ -346,6 +358,10 @@
                 microscopeAssembly.add(model);
                 interactiveModels[partInfo.name] = model;
 
+                if (partInfo.name === 'objLenses') {
+                    initialLensQuaternion.copy(model.quaternion); // Store initial tilt as Quaternion for objLenses
+                }
+
                 // Find meshes for clicking and shadows
                 model.traverse((child) => {
                     if (child.isMesh) {
@@ -510,6 +526,7 @@
 
         const deltaY = event.clientY - previousMouseY;
         const rotationSpeed = 0.01; // Knob sensitivity
+        const angle = deltaY * rotationSpeed;
 
         let modelToRotate = interactiveModels[currentFocusName];
         
@@ -517,15 +534,24 @@
             if (currentFocusName === 'fineAdjKnob') {
                 modelToRotate.rotation.z += deltaY * rotationSpeed;
             } else if (currentFocusName === 'objLenses') {
-                // UPDATED: Use rotateOnAxis for local rotation
-                const angle = deltaY * rotationSpeed;
-                modelToRotate.rotateOnAxis(localLensRotationAxis, angle);
+                // Track total angle and apply rotation via quaternion
+                currentLensAngle += angle;
+                const spinQuaternion = new THREE.Quaternion().setFromAxisAngle(localLensRotationAxis, currentLensAngle);
+                // Combine the initial tilt with the interactive spin
+                modelToRotate.quaternion.multiplyQuaternions(initialLensQuaternion, spinQuaternion);
+                
+                console.log('Current Lens Angle (Radians):', currentLensAngle.toFixed(4));
             }
         }
         previousMouseY = event.clientY;
     }
 
     function onMouseUp(event) {
+        if (isDragging) {
+            if (currentFocusName === 'objLenses') {
+                snapToNearestObjective();
+            }
+        }
         isDragging = false;
         document.body.style.cursor = 'default';
     }
@@ -566,6 +592,7 @@
         const touch = event.touches[0];
         const deltaY = touch.clientY - previousMouseY;
         const rotationSpeed = 0.01;
+        const angle = deltaY * rotationSpeed;
 
         let modelToRotate = interactiveModels[currentFocusName];
         
@@ -573,16 +600,47 @@
             if (currentFocusName === 'fineAdjKnob') {
                 modelToRotate.rotation.z += deltaY * rotationSpeed;
             } else if (currentFocusName === 'objLenses') {
-                // UPDATED: Use rotateOnAxis for local rotation
-                const angle = deltaY * rotationSpeed;
-                modelToRotate.rotateOnAxis(localLensRotationAxis, angle);
+                currentLensAngle += angle;
+                const spinQuaternion = new THREE.Quaternion().setFromAxisAngle(localLensRotationAxis, currentLensAngle);
+                
+                // Combine initial tilt with interactive spin
+                modelToRotate.quaternion.multiplyQuaternions(initialLensQuaternion, spinQuaternion);
+
+                console.log('Current Lens Angle (Radians):', currentLensAngle.toFixed(4));
             }
         }
         previousMouseY = touch.clientY;
     }
 
     function onTouchEnd(event) {
+        if (isDragging && currentFocusName === 'objLenses') {
+            snapToNearestObjective();
+        }
         isDragging = false;
+    }
+
+    function snapToNearestObjective() {
+        isSnapping = true;
+        let closestDifference = Infinity;
+        
+        // Count full turns
+        const fullTurns = Math.floor(currentLensAngle / (Math.PI * 2));
+
+        // Check target angles across all rotations to find ABSOLUTE closest point
+        TARGET_LENS_ANGLES.forEach(targetAngleInTurn => {
+            let fullTargetAngle = (fullTurns * Math.PI * 2) + targetAngleInTurn;
+            let nextTargetAngle = ((fullTurns + 1) * Math.PI * 2) + targetAngleInTurn;
+            let prevTargetAngle = ((fullTurns - 1) * Math.PI * 2) + targetAngleInTurn;
+
+            // Compare against all three potential targets
+            [fullTargetAngle, nextTargetAngle, prevTargetAngle].forEach(target => {
+                const diff = Math.abs(target - currentLensAngle);
+                if (diff < closestDifference) {
+                    closestDifference = diff;
+                    targetLensAngle = target;
+                }
+            });
+        });
     }
 
     function zoomIn(modelName) {
@@ -613,6 +671,7 @@
         currentFocusName = null; // Clear focus
         isAnimating = true;
         isDragging = false;
+        isSnapping = false;
         targetCameraPosition.copy(homeCameraPosition);
         targetCameraLookAt.copy(homeCameraLookAt);
         controls.enabled = true;
@@ -629,6 +688,7 @@
         
         // Damping value - adjust to speed up movements
         const delta = 0.05;
+        const snapSpeed = 0.1;
 
         if (isAnimating) {
             camera.position.lerp(targetCameraPosition, delta);
@@ -639,6 +699,27 @@
                 camera.position.copy(targetCameraPosition);
                 controls.target.copy(targetCameraLookAt);
                 isAnimating = false;
+            }
+        }
+
+        if (isSnapping) {
+            const diff = targetLensAngle - currentLensAngle;
+
+            // Check if close enough to stop snapping
+            if (Math.abs(diff) < 0.005) {
+                currentLensAngle = targetLensAngle;
+                isSnapping = false;
+            } else {
+                // Smoothly move current angle towards target angle
+                currentLensAngle = THREE.MathUtils.lerp(currentLensAngle, targetLensAngle, snapSpeed);
+                
+                // Apply new rotation angle
+                const modelToRotate = interactiveModels['objLenses'];
+                if (modelToRotate) {
+                    const spinQuaternion = new THREE.Quaternion().setFromAxisAngle(localLensRotationAxis, currentLensAngle);
+                    // Combine initial tilt with interactive spin
+                    modelToRotate.quaternion.multiplyQuaternions(initialLensQuaternion, spinQuaternion);
+                }
             }
         }
 
