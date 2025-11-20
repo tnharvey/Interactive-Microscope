@@ -69,6 +69,7 @@
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+    import Stats from 'three/addons/libs/stats.module.js'
 
     // CORE SETUP
     let scene, camera, renderer, controls;
@@ -175,6 +176,10 @@
     const FAINT_GLOW_EMISSIVE = 0x444444; // Emissive color for faint glow
     const HOVER_GLOW_EMISSIVE = 0x888888; // Emissive color for hover glow
     let hoveredGroupName = null;
+
+    // STATS
+    const stats = new Stats();
+    document.body.appendChild(stats.dom);
 
     // INITIALIZATION
     init();
@@ -635,6 +640,8 @@
 
         controls.update(); 
         composer.render();
+
+        stats.update();
     }
     </script>
 </body>
