@@ -106,6 +106,9 @@
     const interactiveModels = {}; // Lookup for models by name
     let clickableMeshes = []; // Array of meshes for raycasting
     let allInteractiveMeshes = [];
+    
+    // OBJECTIVE LENSES AXIS
+    const localLensRotationAxis = new THREE.Vector3(0, 1, 0);
 
     // MODEL DATA
     const modelParts = [
@@ -477,22 +480,28 @@
 
     function onMouseDown(event) {
         // Only start dragging if zoomed in on knob
-        if (isAnimating || currentFocusName !== 'fineAdjKnob') return;
+        if (isAnimating || (currentFocusName !== 'fineAdjKnob' && currentFocusName !== 'objLenses')) return;
 
         // Check if the click was on knob
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
         
-        const knobModel = interactiveModels['fineAdjKnob'];
-        if (!knobModel) return;
-
-        const intersects = raycaster.intersectObject(knobModel, true);
+        // Check intersection with either knob OR lenses
+        let interactiveModel;
+        if (currentFocusName === 'fineAdjKnob') {
+            interactiveModel = interactiveModels['fineAdjKnob'];
+        } else if (currentFocusName === 'objLenses') {
+            interactiveModel = interactiveModels['objLenses'];
+        }
+        
+        if (!interactiveModel) return;
+        const intersects = raycaster.intersectObject(interactiveModel, true);
 
         if (intersects.length > 0) {
             isDragging = true;
             previousMouseY = event.clientY;
-            document.body.style.cursor = 'ns-resize'; // Vertical resize cursor
+            document.body.style.cursor = 'ns-resize'; // Horizontal resize cursor
         }
     }
 
@@ -502,10 +511,16 @@
         const deltaY = event.clientY - previousMouseY;
         const rotationSpeed = 0.01; // Knob sensitivity
 
-        const knobModel = interactiveModels['fineAdjKnob'];
-        if (knobModel) {
-            // Rotate knob around z-axis
-            knobModel.rotation.z += deltaY * rotationSpeed;
+        let modelToRotate = interactiveModels[currentFocusName];
+        
+        if (modelToRotate) {
+            if (currentFocusName === 'fineAdjKnob') {
+                modelToRotate.rotation.z += deltaY * rotationSpeed;
+            } else if (currentFocusName === 'objLenses') {
+                // UPDATED: Use rotateOnAxis for local rotation
+                const angle = deltaY * rotationSpeed;
+                modelToRotate.rotateOnAxis(localLensRotationAxis, angle);
+            }
         }
         previousMouseY = event.clientY;
     }
@@ -518,16 +533,22 @@
     // DRAG HANDLERS for TOUCH
     function onTouchStart(event) {
         // Only allow drag if zoomed in on knob
-        if (isAnimating || currentFocusName !== 'fineAdjKnob') return;
+        if (isAnimating || (currentFocusName !== 'fineAdjKnob' && currentFocusName !== 'objLenses')) return;
 
         const touch = event.touches[0];
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (touch.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
 
-        const knobModel = interactiveModels['fineAdjKnob'];
-        if (!knobModel) return;
-        const intersects = raycaster.intersectObject(knobModel, true);
+        let interactiveModel;
+        if (currentFocusName === 'fineAdjKnob') {
+            interactiveModel = interactiveModels['fineAdjKnob'];
+        } else if (currentFocusName === 'objLenses') {
+            interactiveModel = interactiveModels['objLenses'];
+        }
+
+        if (!interactiveModel) return;
+        const intersects = raycaster.intersectObject(interactiveModel, true);
 
         if (intersects.length > 0) {
             isDragging = true;
@@ -546,9 +567,16 @@
         const deltaY = touch.clientY - previousMouseY;
         const rotationSpeed = 0.01;
 
-        const knobModel = interactiveModels['fineAdjKnob'];
-        if (knobModel) {
-            knobModel.rotation.z += deltaY * rotationSpeed;
+        let modelToRotate = interactiveModels[currentFocusName];
+        
+        if (modelToRotate) {
+            if (currentFocusName === 'fineAdjKnob') {
+                modelToRotate.rotation.z += deltaY * rotationSpeed;
+            } else if (currentFocusName === 'objLenses') {
+                // UPDATED: Use rotateOnAxis for local rotation
+                const angle = deltaY * rotationSpeed;
+                modelToRotate.rotateOnAxis(localLensRotationAxis, angle);
+            }
         }
         previousMouseY = touch.clientY;
     }
