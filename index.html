@@ -55,7 +55,12 @@
         {
             "imports": {
                 "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "three/addons/postprocessing/EffectComposer.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js",
+                "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
+                "three/addons/postprocessing/OutlinePass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutlinePass.js",
+                "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js",
+                "three/addons/loaders/RGBELoader.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/RGBELoader.js"
             }
         }
     </script>
@@ -66,14 +71,13 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
     import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js'; 
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
     import Stats from 'three/addons/libs/stats.module.js'
 
     // CORE SETUP
-    let scene, camera, renderer, controls;
-    let composer, bloomPass; // For post-processing
+    let scene, camera, renderer, controls, composer, outlinePass; // For post-processing
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     const loader = new GLTFLoader();
@@ -101,6 +105,7 @@
     const microscopeAssembly = new THREE.Group(); // Main group
     const interactiveModels = {}; // Lookup for models by name
     let clickableMeshes = []; // Array of meshes for raycasting
+    let allInteractiveMeshes = [];
 
     // MODEL DATA
     const modelParts = [
@@ -236,6 +241,9 @@
                 plane.rotation.x = -Math.PI / 2;
                 plane.receiveShadow = true;
                 scene.add(plane);
+
+                // Initial Outline Setup - Select all interactive parts
+                setInitialOutline();
             },
             undefined,
             (error) => {
@@ -281,18 +289,22 @@
         // POST-PROCESSING (GLOW EFFECT)
         const renderPass = new RenderPass(scene, camera);
 
-        bloomPass = new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            0, // strength
-            0, // radius
-            0  // threshold (glows anything brighter than 0.1)
-        );
-
+        // Create OutlinePass
+        const resolution = new THREE.Vector2(window.innerWidth, window.innerHeight);
+        outlinePass = new OutlinePass(resolution, scene, camera);
+        
+        // Configure look of outline (adjust values to tune look)
+        outlinePass.edgeStrength = 4.0;
+        outlinePass.edgeThickness = 0.01;
+        outlinePass.edgeGlow = 0.0; // Sharp outline, no glow
+        outlinePass.visibleEdgeColor.set(0xffff00); // Bright Yellow/Gold for hover
+        outlinePass.hiddenEdgeColor.set(0x000000); // Black behind objects
+        
+        // Add passes to composer
         const outputPass = new OutputPass();
-
         composer = new EffectComposer(renderer);
         composer.addPass(renderPass);
-        composer.addPass(bloomPass);
+        composer.addPass(outlinePass); // Add OutlinePass
         composer.addPass(outputPass);
 
         // EVENT LISTENERS
@@ -340,28 +352,18 @@
                         if (partInfo.isInteractive) {
                             clickableMeshes.push(child);
                             child.userData.interactiveName = partInfo.name;
-                            
-                            const processMaterial = (mat) => {
-                                // (metalness, roughness, maps, etc.)
-                                const newMat = mat.clone();
-                                
-                                // Store original emissive value
-                                // Ensure userData exists
-                                if (!newMat.userData) newMat.userData = {}; 
-                                newMat.userData.originalEmissive = newMat.emissive.clone();
-                                
-                                // Set the faint glow
-                                newMat.emissive.setHex(FAINT_GLOW_EMISSIVE);
-                                return newMat;
-                            };
-
-                            if (Array.isArray(child.material)) {
-                                // Mesh has multiple materials
-                                child.material = child.material.map(processMaterial);
-                            } else if (child.material) {
-                                // Mesh has one material
-                                child.material = processMaterial(child.material);
-                            }
+                            // Collect all meshes for interactive parts
+                            allInteractiveMeshes.push(child); 
+                        }
+                        
+                        if (Array.isArray(child.material)) {
+                            child.material = child.material.map(mat => mat.clone());
+                        } else if (child.material) {
+                            child.material = child.material.clone();
+                        }
+                        // Ensure base materials are NOT emissive
+                        if (child.material && child.material.emissive) {
+                            child.material.emissive.setHex(0x000000);
                         }
                     }
                 });
@@ -374,23 +376,26 @@
         );
     }
 
+    // INITIAL OUTLINE SETUP
+    function setInitialOutline() {
+        // Set all interactive parts to be faintly outlined initially
+        outlinePass.edgeStrength = 1.0;
+        outlinePass.visibleEdgeColor.set(0x444444);
+        outlinePass.selectedObjects = allInteractiveMeshes;
+    }
 
     function onWindowResize() {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
         composer.setSize(window.innerWidth, window.innerHeight);
+        outlinePass.resolution.set(window.innerWidth, window.innerHeight);
     }
 
     // HOVER LOGIC
     function onMouseMove(event) {
-        if (currentFocusName || isAnimating || isDragging) {
-            if (hoveredGroupName) {
-                setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
-                hoveredGroupName = null;
-            }
-            return;
-        }
+        // If zoomed in or dragging, skip hover effects
+        if (currentFocusName || isAnimating || isDragging) return;
 
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
@@ -401,47 +406,28 @@
         if (intersects.length > 0) {
             newHoveredGroupName = intersects[0].object.userData.interactiveName;
         }
-
+        
+        // Outline Hover Logic
         if (newHoveredGroupName !== hoveredGroupName) {
-            if (hoveredGroupName) {
-                setGroupEmissive(hoveredGroupName, FAINT_GLOW_EMISSIVE);
-            }
             hoveredGroupName = newHoveredGroupName;
+            
+            // Always reset to initial state
+            outlinePass.selectedObjects = allInteractiveMeshes.slice();
+            outlinePass.edgeStrength = 1.0;
+            outlinePass.visibleEdgeColor.set(0x444444);
+
             if (hoveredGroupName) {
-                setGroupEmissive(hoveredGroupName, HOVER_GLOW_EMISSIVE);
+                // Find meshes corresponding to hovered group
+                const meshesToHighlight = allInteractiveMeshes.filter(mesh => 
+                    mesh.userData.interactiveName === hoveredGroupName
+                );
+
+                // Set high-strength, bright yellow outline for hovered group
+                outlinePass.edgeStrength = 5.0;
+                outlinePass.visibleEdgeColor.set(0xffff00); // Bright Yellow/Gold
+                outlinePass.selectedObjects = meshesToHighlight;
             }
         }
-    }
-
-    // HELPER FUNCTION for setting group glow
-    function setGroupEmissive(modelName, emissiveValue) {
-        const model = interactiveModels[modelName];
-        if (!model) return;
-
-        model.traverse((child) => {
-            if (child.isMesh && child.userData.interactiveName === modelName) {
-                const setEmissive = (mat) => {
-                    if (!mat.userData || !mat.userData.originalEmissive) {
-                        // This material wasn't processed (e.g., non-interactive part of group)
-                        // Or it's a part of the group we shouldn't be glowing
-                        return; 
-                    }
-
-                    if (emissiveValue !== null) {
-                        mat.emissive.setHex(emissiveValue);
-                    } else {
-                        // Reset to original (null) by copying stored value
-                        mat.emissive.copy(mat.userData.originalEmissive);
-                    }
-                };
-
-                if (Array.isArray(child.material)) {
-                    child.material.forEach(setEmissive);
-                } else if (child.material) {
-                    setEmissive(child.material);
-                }
-            }
-        });
     }
 
     function onMouseClick(event) {
@@ -584,16 +570,15 @@
         backButton.classList.remove('hidden');
         document.getElementById('info').innerText = `Now viewing: ${partData.friendlyName || modelName}`;
 
-        // Stop all glow effects
-        if (hoveredGroupName) {
-            setGroupEmissive(hoveredGroupName, null); // null resets to original
-            hoveredGroupName = null;
-        }
-        modelParts.forEach(part => {
-            if (part.isInteractive) setGroupEmissive(part.name, null);
-        });
+        // Outline Logic for ZoomIn
+        // Only select meshes of currently focused object
+        const focusedMeshes = allInteractiveMeshes.filter(mesh => 
+            mesh.userData.interactiveName === currentFocusName
+        );
         
-        setGroupEmissive(currentFocusName, HOVER_GLOW_EMISSIVE);
+        outlinePass.selectedObjects = focusedMeshes;
+        outlinePass.edgeStrength = 5.0;
+        outlinePass.visibleEdgeColor.set(0xffff00); 
     }
 
     function zoomOut() {
@@ -607,16 +592,7 @@
         document.getElementById('info').innerText = 'Click an interactive part to zoom in.';
         document.body.style.cursor = 'default';
 
-        // Re-enable faint glow for all interactive models
-        modelParts.forEach(part => {
-            if (part.isInteractive) {
-                setGroupEmissive(part.name, FAINT_GLOW_EMISSIVE);
-            }
-        });
-
-        // Turn off microscope light if it was on
-        //isLightOn = false;
-        //microscopeLight.visible = false;
+        setInitialOutline(); // Return to faint outline for all interactive parts
     }
 
     // ANIMATION LOOP
